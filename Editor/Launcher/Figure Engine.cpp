@@ -45,6 +45,7 @@ struct ProjectConfig
 HINSTANCE hInst;
 WCHAR szTitle[MAX_LOADSTRING];
 WCHAR szWindowClass[MAX_LOADSTRING];
+const wchar_t LEVEL_EDITOR_WINDOW_CLASS[] = L"FigureIntegratedLevelEditorWindow";
 
 LauncherPage g_CurrentPage = LauncherPage::Home;
 ProjectConfig g_Project;
@@ -61,8 +62,11 @@ const int NAV_BUTTON_MARGIN = 8;
 
 // Forward declarations
 ATOM                MyRegisterClass(HINSTANCE hInstance);
+ATOM                RegisterLevelEditorClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
+HWND                CreateLevelEditorWindow(HINSTANCE hInstance);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    LevelEditorWndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 void SetLauncherPage(LauncherPage page, HWND hWnd);
@@ -118,6 +122,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_FIGUREENGINE, szWindowClass, MAX_LOADSTRING);
     MyRegisterClass(hInstance);
+    RegisterLevelEditorClass(hInstance);
     LoadRecentProjects();
 
     if (!InitInstance(hInstance, nCmdShow))
@@ -168,6 +173,35 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     return RegisterClassExW(&wcex);
+}
+
+ATOM RegisterLevelEditorClass(HINSTANCE hInstance)
+{
+    WNDCLASSEXW wcex = {};
+
+    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = LevelEditorWndProc;
+    wcex.hInstance = hInstance;
+    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_FIGUREENGINE));
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszClassName = LEVEL_EDITOR_WINDOW_CLASS;
+    wcex.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL));
+
+    return RegisterClassExW(&wcex);
+}
+
+HWND CreateLevelEditorWindow(HINSTANCE hInstance)
+{
+    return CreateWindowW(
+        LEVEL_EDITOR_WINDOW_CLASS,
+        L"Figure Engine Level Editor",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, 0,
+        1280, 820,
+        nullptr, nullptr,
+        hInstance, nullptr);
 }
 
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
@@ -947,9 +981,35 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
 
         case IDM_TOOL_LEVEL_EDITOR:
-            LaunchTool(hWnd, g_Project.levelEditorExecutable, L"Select Level Editor Executable", L"Started Level Editor.");
+        {
+            int choice = MessageBoxW(
+                hWnd,
+                L"Yes = open the built-in Level Editor window\nNo = browse for a Level Editor executable\nCancel = do nothing",
+                L"Open Level Editor",
+                MB_YESNOCANCEL | MB_ICONQUESTION);
+
+            if (choice == IDYES)
+            {
+                HWND hEditor = CreateLevelEditorWindow(hInst);
+                if (hEditor)
+                {
+                    ShowWindow(hEditor, SW_SHOW);
+                    UpdateWindow(hEditor);
+                    AddLog(L"Opened built-in Level Editor window.", hWnd);
+                }
+                else
+                {
+                    MessageBoxW(hWnd, L"Failed to open the built-in Level Editor window.", L"Figure Engine", MB_OK | MB_ICONERROR);
+                }
+            }
+            else if (choice == IDNO)
+            {
+                LaunchTool(hWnd, g_Project.levelEditorExecutable, L"Select Level Editor Executable", L"Started Level Editor.");
+            }
+
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
+        }
 
         case IDM_TOOL_ANIMATION_EDITOR:
             LaunchTool(hWnd, g_Project.animationEditorExecutable, L"Select Animation Editor Executable", L"Started Animation Editor.");
@@ -1054,6 +1114,58 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
 
     return 0;
+}
+
+LRESULT CALLBACK LevelEditorWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        RECT clientRect;
+        GetClientRect(hWnd, &clientRect);
+
+        RECT toolbar = { 0, 0, clientRect.right, 52 };
+        RECT tools = { 0, 52, 180, clientRect.bottom - 140 };
+        RECT viewport = { 180, 52, clientRect.right - 280, clientRect.bottom - 140 };
+        RECT properties = { clientRect.right - 280, 52, clientRect.right, clientRect.bottom - 140 };
+        RECT output = { 0, clientRect.bottom - 140, clientRect.right, clientRect.bottom };
+
+        FillSolidRect(hdc, toolbar, RGB(245, 245, 245));
+        FillSolidRect(hdc, tools, RGB(248, 248, 248));
+        FillSolidRect(hdc, viewport, RGB(255, 255, 255));
+        FillSolidRect(hdc, properties, RGB(248, 248, 248));
+        FillSolidRect(hdc, output, RGB(242, 242, 242));
+
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(20, 20, 20));
+
+        DrawTextLine(hdc, 16, 18, L"Figure Engine Level Editor");
+        DrawTextLine(hdc, 16, 72, L"Tools");
+        DrawTextLine(hdc, 16, 102, L"- Select");
+        DrawTextLine(hdc, 16, 122, L"- Block");
+        DrawTextLine(hdc, 16, 142, L"- Entity");
+        DrawTextLine(hdc, 196, 72, L"Viewport");
+        DrawTextLine(hdc, 196, 102, L"Built-in editor window from the launcher.");
+        DrawTextLine(hdc, 196, 122, L"You can replace this with your real LevelEditor code later.");
+        DrawTextLine(hdc, clientRect.right - 260, 72, L"Properties");
+        DrawTextLine(hdc, clientRect.right - 260, 102, L"Selection: None");
+        DrawTextLine(hdc, 16, clientRect.bottom - 120, L"Output");
+        DrawTextLine(hdc, 16, clientRect.bottom - 96, L"Launcher opened the built-in Level Editor.");
+
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+
+    case WM_DESTROY:
+        return 0;
+
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
 }
 
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)

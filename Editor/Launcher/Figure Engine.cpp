@@ -23,6 +23,28 @@ enum class LauncherPage
     OutputLog
 };
 
+enum class ToolKind
+{
+    LevelEditor,
+    AnimationEditor,
+    MaterialEditor,
+    ShaderEditor,
+    UIEditor,
+    AudioEditor,
+    VFXEditor
+};
+
+struct SettingsButtons
+{
+    RECT level{};
+    RECT animation{};
+    RECT material{};
+    RECT shader{};
+    RECT ui{};
+    RECT audio{};
+    RECT vfx{};
+};
+
 struct ProjectConfig
 {
     std::wstring projectFilePath;
@@ -45,7 +67,6 @@ struct ProjectConfig
 HINSTANCE hInst;
 WCHAR szTitle[MAX_LOADSTRING];
 WCHAR szWindowClass[MAX_LOADSTRING];
-const wchar_t LEVEL_EDITOR_WINDOW_CLASS[] = L"FigureIntegratedLevelEditorWindow";
 
 LauncherPage g_CurrentPage = LauncherPage::Home;
 ProjectConfig g_Project;
@@ -55,6 +76,8 @@ std::vector<std::wstring> g_OutputLog =
     L"Figure Engine launcher started."
 };
 
+const wchar_t LEVEL_EDITOR_WINDOW_CLASS[] = L"FigureLevelEditorInternalWindow";
+
 const int SIDEBAR_WIDTH = 220;
 const int LOG_HEIGHT = 160;
 const int NAV_BUTTON_HEIGHT = 44;
@@ -62,12 +85,12 @@ const int NAV_BUTTON_MARGIN = 8;
 
 // Forward declarations
 ATOM                MyRegisterClass(HINSTANCE hInstance);
-ATOM                RegisterLevelEditorClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
-HWND                CreateLevelEditorWindow(HINSTANCE hInstance);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-LRESULT CALLBACK    LevelEditorWndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    LevelEditorWndProc(HWND, UINT, WPARAM, LPARAM);
+ATOM                RegisterLevelEditorClass(HINSTANCE hInstance);
+HWND                CreateLevelEditorWindow(HINSTANCE hInstance);
 
 void SetLauncherPage(LauncherPage page, HWND hWnd);
 void AddLog(const std::wstring& text, HWND hWnd);
@@ -85,6 +108,13 @@ void DrawOutputLogPage(HDC hdc, RECT rc);
 void DrawTextLine(HDC hdc, int x, int y, const std::wstring& text);
 void DrawSectionTitle(HDC hdc, int x, int y, const std::wstring& text);
 std::wstring DisplayValue(const std::wstring& value, const std::wstring& fallback = L"<not set>");
+SettingsButtons GetSettingsButtons(const RECT& rc);
+void DrawActionButton(HDC hdc, const RECT& rc, const std::wstring& text);
+std::wstring* GetToolExecutablePath(ToolKind kind);
+std::wstring GetToolDisplayName(ToolKind kind);
+bool ConfigureToolExecutable(HWND hWnd, ToolKind kind);
+void LaunchConfiguredToolExecutable(HWND hWnd, ToolKind kind);
+void ShowToolLaunchPopup(HWND hWnd, ToolKind kind);
 
 std::wstring GetAppDirectory();
 std::wstring GetLauncherConfigPath();
@@ -175,35 +205,6 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
-ATOM RegisterLevelEditorClass(HINSTANCE hInstance)
-{
-    WNDCLASSEXW wcex = {};
-
-    wcex.cbSize = sizeof(WNDCLASSEX);
-    wcex.style = CS_HREDRAW | CS_VREDRAW;
-    wcex.lpfnWndProc = LevelEditorWndProc;
-    wcex.hInstance = hInstance;
-    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_FIGUREENGINE));
-    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wcex.lpszClassName = LEVEL_EDITOR_WINDOW_CLASS;
-    wcex.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL));
-
-    return RegisterClassExW(&wcex);
-}
-
-HWND CreateLevelEditorWindow(HINSTANCE hInstance)
-{
-    return CreateWindowW(
-        LEVEL_EDITOR_WINDOW_CLASS,
-        L"Figure Engine Level Editor",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0,
-        1280, 820,
-        nullptr, nullptr,
-        hInstance, nullptr);
-}
-
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
     hInst = hInstance;
@@ -226,6 +227,35 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     UpdateWindow(hWnd);
 
     return TRUE;
+}
+
+ATOM RegisterLevelEditorClass(HINSTANCE hInstance)
+{
+    WNDCLASSEXW wcex = {};
+
+    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = LevelEditorWndProc;
+    wcex.hInstance = hInstance;
+    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_FIGUREENGINE));
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszClassName = LEVEL_EDITOR_WINDOW_CLASS;
+    wcex.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL));
+
+    return RegisterClassExW(&wcex);
+}
+
+HWND CreateLevelEditorWindow(HINSTANCE hInstance)
+{
+    return CreateWindowW(
+        LEVEL_EDITOR_WINDOW_CLASS,
+        L"Figure Engine Level Editor",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, 0,
+        1200, 800,
+        nullptr, nullptr,
+        hInstance, nullptr);
 }
 
 void SetLauncherPage(LauncherPage page, HWND hWnd)
@@ -265,6 +295,139 @@ void DrawSectionTitle(HDC hdc, int x, int y, const std::wstring& text)
 std::wstring DisplayValue(const std::wstring& value, const std::wstring& fallback)
 {
     return value.empty() ? fallback : value;
+}
+
+void DrawActionButton(HDC hdc, const RECT& rc, const std::wstring& text)
+{
+    FillSolidRect(hdc, rc, RGB(230, 230, 230));
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(20, 20, 20));
+    DrawTextW(hdc, text.c_str(), -1, const_cast<RECT*>(&rc), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    FrameRect(hdc, const_cast<RECT*>(&rc), (HBRUSH)GetStockObject(GRAY_BRUSH));
+}
+
+SettingsButtons GetSettingsButtons(const RECT& rc)
+{
+    SettingsButtons b{};
+    int x = rc.left + 20;
+    int y = rc.top + 150;
+    int w = 200;
+    int h = 28;
+    b.level = {x, y, x + w, y + h}; y += 36;
+    b.animation = {x, y, x + w, y + h}; y += 36;
+    b.material = {x, y, x + w, y + h}; y += 36;
+    b.shader = {x, y, x + w, y + h}; y += 36;
+    b.ui = {x, y, x + w, y + h}; y += 36;
+    b.audio = {x, y, x + w, y + h}; y += 36;
+    b.vfx = {x, y, x + w, y + h};
+    return b;
+}
+
+std::wstring* GetToolExecutablePath(ToolKind kind)
+{
+    switch (kind)
+    {
+    case ToolKind::LevelEditor: return &g_Project.levelEditorExecutable;
+    case ToolKind::AnimationEditor: return &g_Project.animationEditorExecutable;
+    case ToolKind::MaterialEditor: return &g_Project.materialEditorExecutable;
+    case ToolKind::ShaderEditor: return &g_Project.shaderEditorExecutable;
+    case ToolKind::UIEditor: return &g_Project.uiEditorExecutable;
+    case ToolKind::AudioEditor: return &g_Project.audioEditorExecutable;
+    case ToolKind::VFXEditor: return &g_Project.vfxEditorExecutable;
+    default: return nullptr;
+    }
+}
+
+std::wstring GetToolDisplayName(ToolKind kind)
+{
+    switch (kind)
+    {
+    case ToolKind::LevelEditor: return L"Level Editor";
+    case ToolKind::AnimationEditor: return L"Animation Editor";
+    case ToolKind::MaterialEditor: return L"Material Editor";
+    case ToolKind::ShaderEditor: return L"Shader Editor";
+    case ToolKind::UIEditor: return L"UI Editor";
+    case ToolKind::AudioEditor: return L"Audio Editor";
+    case ToolKind::VFXEditor: return L"VFX Editor";
+    default: return L"Tool";
+    }
+}
+
+bool ConfigureToolExecutable(HWND hWnd, ToolKind kind)
+{
+    std::wstring* path = GetToolExecutablePath(kind);
+    if (!path)
+    {
+        return false;
+    }
+
+    std::wstring title = L"Set " + GetToolDisplayName(kind) + L" Executable";
+    std::wstring selected = BrowseForOpenPath(hWnd, L"Executable (*.exe) *.exe All Files (*.*) *.* ", title.c_str());
+    if (selected.empty())
+    {
+        return false;
+    }
+
+    *path = selected;
+    SaveProjectConfig();
+    AddLog(L"Saved executable path for " + GetToolDisplayName(kind) + L".", hWnd);
+    return true;
+}
+
+void LaunchConfiguredToolExecutable(HWND hWnd, ToolKind kind)
+{
+    if (!EnsureCurrentProject(hWnd))
+    {
+        return;
+    }
+
+    std::wstring* path = GetToolExecutablePath(kind);
+    if (!path || path->empty())
+    {
+        std::wstring message = GetToolDisplayName(kind) + L" does not have an executable set yet.
+
+Open Settings and set the executable path first.";
+        MessageBoxW(hWnd, message.c_str(), L"Figure Engine", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    LaunchExecutable(*path, L"-project "" + g_Project.projectFilePath + L""", hWnd, L"Started " + GetToolDisplayName(kind) + L" executable.");
+}
+
+void ShowToolLaunchPopup(HWND hWnd, ToolKind kind)
+{
+    std::wstring message = L"Yes = Open built-in " + GetToolDisplayName(kind) +
+        L"
+No = Run the executable set in Settings
+Cancel = Do nothing";
+
+    int result = MessageBoxW(hWnd, message.c_str(), GetToolDisplayName(kind).c_str(), MB_YESNOCANCEL | MB_ICONQUESTION);
+    if (result == IDYES)
+    {
+        if (kind == ToolKind::LevelEditor)
+        {
+            HWND hEditor = CreateLevelEditorWindow(hInst);
+            if (hEditor)
+            {
+                ShowWindow(hEditor, SW_SHOW);
+                UpdateWindow(hEditor);
+                AddLog(L"Opened built-in Level Editor window.", hWnd);
+            }
+            else
+            {
+                MessageBoxW(hWnd, L"Failed to open built-in Level Editor.", L"Figure Engine", MB_OK | MB_ICONERROR);
+            }
+        }
+        else
+        {
+            std::wstring builtInMessage = GetToolDisplayName(kind) + L" is not available as a built-in window yet.";
+            MessageBoxW(hWnd, builtInMessage.c_str(), L"Figure Engine", MB_OK | MB_ICONINFORMATION);
+        }
+    }
+    else if (result == IDNO)
+    {
+        LaunchConfiguredToolExecutable(hWnd, kind);
+    }
 }
 
 void FillSolidRect(HDC hdc, RECT rc, COLORREF color)
@@ -415,7 +578,26 @@ void DrawSettingsPage(HDC hdc, RECT rc)
     y += 20;
     DrawTextLine(hdc, rc.left + 20, y, L"Startup Map: " + DisplayValue(g_Project.startupMap));
     y += 30;
-    DrawTextLine(hdc, rc.left + 20, y, L"Save Settings writes the current config back into the .figproj file.");
+    DrawTextLine(hdc, rc.left + 20, y, L"Editor executable paths");
+
+    SettingsButtons buttons = GetSettingsButtons(rc);
+    DrawActionButton(hdc, buttons.level, L"Set Level Editor EXE");
+    DrawActionButton(hdc, buttons.animation, L"Set Animation Editor EXE");
+    DrawActionButton(hdc, buttons.material, L"Set Material Editor EXE");
+    DrawActionButton(hdc, buttons.shader, L"Set Shader Editor EXE");
+    DrawActionButton(hdc, buttons.ui, L"Set UI Editor EXE");
+    DrawActionButton(hdc, buttons.audio, L"Set Audio Editor EXE");
+    DrawActionButton(hdc, buttons.vfx, L"Set VFX Editor EXE");
+
+    int pathX = rc.left + 240;
+    int pathY = rc.top + 156;
+    DrawTextLine(hdc, pathX, pathY, L"Level: " + DisplayValue(g_Project.levelEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"Animation: " + DisplayValue(g_Project.animationEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"Material: " + DisplayValue(g_Project.materialEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"Shader: " + DisplayValue(g_Project.shaderEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"UI: " + DisplayValue(g_Project.uiEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"Audio: " + DisplayValue(g_Project.audioEditorExecutable)); pathY += 36;
+    DrawTextLine(hdc, pathX, pathY, L"VFX: " + DisplayValue(g_Project.vfxEditorExecutable));
 }
 
 void DrawToolsPage(HDC hdc, RECT rc)
@@ -981,63 +1163,37 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
 
         case IDM_TOOL_LEVEL_EDITOR:
-        {
-            int choice = MessageBoxW(
-                hWnd,
-                L"Yes = open the built-in Level Editor window\nNo = browse for a Level Editor executable\nCancel = do nothing",
-                L"Open Level Editor",
-                MB_YESNOCANCEL | MB_ICONQUESTION);
-
-            if (choice == IDYES)
-            {
-                HWND hEditor = CreateLevelEditorWindow(hInst);
-                if (hEditor)
-                {
-                    ShowWindow(hEditor, SW_SHOW);
-                    UpdateWindow(hEditor);
-                    AddLog(L"Opened built-in Level Editor window.", hWnd);
-                }
-                else
-                {
-                    MessageBoxW(hWnd, L"Failed to open the built-in Level Editor window.", L"Figure Engine", MB_OK | MB_ICONERROR);
-                }
-            }
-            else if (choice == IDNO)
-            {
-                LaunchTool(hWnd, g_Project.levelEditorExecutable, L"Select Level Editor Executable", L"Started Level Editor.");
-            }
-
+            ShowToolLaunchPopup(hWnd, ToolKind::LevelEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
-        }
 
         case IDM_TOOL_ANIMATION_EDITOR:
-            LaunchTool(hWnd, g_Project.animationEditorExecutable, L"Select Animation Editor Executable", L"Started Animation Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::AnimationEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
         case IDM_TOOL_MATERIAL_EDITOR:
-            LaunchTool(hWnd, g_Project.materialEditorExecutable, L"Select Material Editor Executable", L"Started Material Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::MaterialEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
         case IDM_TOOL_SHADER_EDITOR:
-            LaunchTool(hWnd, g_Project.shaderEditorExecutable, L"Select Shader Editor Executable", L"Started Shader Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::ShaderEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
         case IDM_TOOL_UI_EDITOR:
-            LaunchTool(hWnd, g_Project.uiEditorExecutable, L"Select UI Editor Executable", L"Started UI Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::UIEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
         case IDM_TOOL_AUDIO_EDITOR:
-            LaunchTool(hWnd, g_Project.audioEditorExecutable, L"Select Audio Editor Executable", L"Started Audio Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::AudioEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
         case IDM_TOOL_VFX_EDITOR:
-            LaunchTool(hWnd, g_Project.vfxEditorExecutable, L"Select VFX Editor Executable", L"Started VFX Editor.");
+            ShowToolLaunchPopup(hWnd, ToolKind::VFXEditor);
             SetLauncherPage(LauncherPage::Tools, hWnd);
             break;
 
@@ -1088,6 +1244,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         pt.x = GET_X_LPARAM(lParam);
         pt.y = GET_Y_LPARAM(lParam);
 
+        if (g_CurrentPage == LauncherPage::Settings)
+        {
+            RECT mainRc = { SIDEBAR_WIDTH, 0, clientRect.right, clientRect.bottom - LOG_HEIGHT };
+            SettingsButtons buttons = GetSettingsButtons(mainRc);
+            if (PtInRect(&buttons.level, pt)) { ConfigureToolExecutable(hWnd, ToolKind::LevelEditor); break; }
+            if (PtInRect(&buttons.animation, pt)) { ConfigureToolExecutable(hWnd, ToolKind::AnimationEditor); break; }
+            if (PtInRect(&buttons.material, pt)) { ConfigureToolExecutable(hWnd, ToolKind::MaterialEditor); break; }
+            if (PtInRect(&buttons.shader, pt)) { ConfigureToolExecutable(hWnd, ToolKind::ShaderEditor); break; }
+            if (PtInRect(&buttons.ui, pt)) { ConfigureToolExecutable(hWnd, ToolKind::UIEditor); break; }
+            if (PtInRect(&buttons.audio, pt)) { ConfigureToolExecutable(hWnd, ToolKind::AudioEditor); break; }
+            if (PtInRect(&buttons.vfx, pt)) { ConfigureToolExecutable(hWnd, ToolKind::VFXEditor); break; }
+        }
+
         LauncherPage clickedPage = PageFromPoint(pt, clientRect);
         if (clickedPage != g_CurrentPage)
         {
@@ -1124,48 +1293,41 @@ LRESULT CALLBACK LevelEditorWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-
-        RECT clientRect;
-        GetClientRect(hWnd, &clientRect);
-
-        RECT toolbar = { 0, 0, clientRect.right, 52 };
-        RECT tools = { 0, 52, 180, clientRect.bottom - 140 };
-        RECT viewport = { 180, 52, clientRect.right - 280, clientRect.bottom - 140 };
-        RECT properties = { clientRect.right - 280, 52, clientRect.right, clientRect.bottom - 140 };
-        RECT output = { 0, clientRect.bottom - 140, clientRect.right, clientRect.bottom };
-
-        FillSolidRect(hdc, toolbar, RGB(245, 245, 245));
-        FillSolidRect(hdc, tools, RGB(248, 248, 248));
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+        FillSolidRect(hdc, rc, RGB(245, 245, 245));
+        RECT toolbar = { 0, 0, rc.right, 48 };
+        RECT tools = { 0, 48, 180, rc.bottom };
+        RECT viewport = { 180, 48, rc.right - 260, rc.bottom - 160 };
+        RECT props = { rc.right - 260, 48, rc.right, rc.bottom - 160 };
+        RECT output = { 180, rc.bottom - 160, rc.right, rc.bottom };
+        FillSolidRect(hdc, toolbar, RGB(230, 230, 230));
+        FillSolidRect(hdc, tools, RGB(240, 240, 240));
         FillSolidRect(hdc, viewport, RGB(255, 255, 255));
-        FillSolidRect(hdc, properties, RGB(248, 248, 248));
-        FillSolidRect(hdc, output, RGB(242, 242, 242));
-
+        FillSolidRect(hdc, props, RGB(240, 240, 240));
+        FillSolidRect(hdc, output, RGB(235, 235, 235));
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(20, 20, 20));
-
-        DrawTextLine(hdc, 16, 18, L"Figure Engine Level Editor");
-        DrawTextLine(hdc, 16, 72, L"Tools");
-        DrawTextLine(hdc, 16, 102, L"- Select");
-        DrawTextLine(hdc, 16, 122, L"- Block");
-        DrawTextLine(hdc, 16, 142, L"- Entity");
-        DrawTextLine(hdc, 196, 72, L"Viewport");
-        DrawTextLine(hdc, 196, 102, L"Built-in editor window from the launcher.");
-        DrawTextLine(hdc, 196, 122, L"You can replace this with your real LevelEditor code later.");
-        DrawTextLine(hdc, clientRect.right - 260, 72, L"Properties");
-        DrawTextLine(hdc, clientRect.right - 260, 102, L"Selection: None");
-        DrawTextLine(hdc, 16, clientRect.bottom - 120, L"Output");
-        DrawTextLine(hdc, 16, clientRect.bottom - 96, L"Launcher opened the built-in Level Editor.");
-
+        SetTextColor(hdc, RGB(20,20,20));
+        DrawTextLine(hdc, 14, 16, L"Figure Engine Level Editor (built-in)");
+        DrawTextLine(hdc, 14, 70, L"Tools");
+        DrawTextLine(hdc, 28, 100, L"Select");
+        DrawTextLine(hdc, 28, 124, L"Block");
+        DrawTextLine(hdc, 28, 148, L"Entity");
+        DrawTextLine(hdc, viewport.left + 14, viewport.top + 16, L"Viewport");
+        DrawTextLine(hdc, viewport.left + 14, viewport.top + 40, L"Built-in editor window is loading correctly.");
+        DrawTextLine(hdc, props.left + 14, props.top + 16, L"Properties");
+        DrawTextLine(hdc, props.left + 14, props.top + 40, L"Selection: None");
+        DrawTextLine(hdc, output.left + 14, output.top + 16, L"Output");
+        DrawTextLine(hdc, output.left + 14, output.top + 40, L"Next step: wire full LevelEditor project into this window.");
         EndPaint(hWnd, &ps);
         return 0;
     }
-
-    case WM_DESTROY:
+    case WM_CLOSE:
+        DestroyWindow(hWnd);
         return 0;
-
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
     }
+
+    return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)

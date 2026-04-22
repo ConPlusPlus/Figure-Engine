@@ -219,7 +219,8 @@ namespace Figure { namespace Editor { namespace Anvil {
 
     void AnvilWindow::OnLeftButtonDown(POINT pt)
     {
-        if (!PtInRect(&ViewportRect(), pt)) return;
+        RECT viewport = ViewportRect();
+        if (!PtInRect(&viewport, pt)) return;
         if (m_tool == ToolKind::Block)
         {
             m_isDrawing = true;
